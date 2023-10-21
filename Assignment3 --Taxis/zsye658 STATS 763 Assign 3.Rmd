@@ -1,0 +1,185 @@
+---
+title: "STATS 763 Assignment 3"
+author: "zsye658 Zain Raza Raza Syed"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.table)
+library(knitr)
+library(glmnet)
+library(Matrix)
+library(zipcodeR)
+```
+
+## Reading Training Data
+
+```{r}
+wk4 = fread("taxis/week4.csv")
+wk2 = fread("taxis/week2.csv")
+df = rbind(wk2,wk4)
+summary(df)
+```
+
+
+
+```{r}
+#Trip distance
+# If we donot have Cash tip data, lets focus only on credit card, other types are voided or  disputed trips.
+df = df[payment_type == 1,] # added in celan function in function
+
+hist(df[trip_distance<50 & trip_distance >= 0,]$trip_distance
+     , breaks = 100,
+     xlab = "", ylab = "frequency",
+          main = paste("Trip Distance in miles"))
+# shows one major outlier group around 18, singular trips on triple digit mile trips
+# capping at 20
+
+```
+
+
+```{r warning=FALSE}
+clean = function(df,s){
+  df = df[payment_type == 1,] # add in funciotn
+  df = df[trip_distance < 20 & trip_distance >= 0]# removing negatives  # add in function
+  df[, `:=` (trip_time = as.numeric(difftime(tpep_dropoff_datetime, tpep_pickup_datetime,units = "min")))]  # add in function
+  df = df[trip_time < 100 & trip_time > 0] # add in function
+  df = df[fare_amount<75,] # add in function
+  df = sample_frac(df,s)
+}
+
+feat_eng = function(df){
+  df = df[,`:=` (pickup_hr = hour(tpep_pickup_datetime),
+                 pickup_day = day(tpep_pickup_datetime),
+                 pickup_wkday = weekdays(tpep_pickup_datetime),
+                 pickup_loc_bin = as.factor(paste0(round(pickup_latitude,1),round(pickup_longitude,1))),
+                 tip_bin = ifelse(tip_amount > 0,TRUE, FALSE),
+                 trip_time = as.numeric(difftime(tpep_dropoff_datetime, tpep_pickup_datetime,units = "min"))# add in function
+)]
+}
+
+
+dfs = feat_eng(clean(df,0.05))
+
+```
+
+
+```{r}
+# time values
+summary(dfs$trip_time)
+hist(dfs[trip_time<100 & trip_time > 0]$trip_time, breaks = 100,
+          xlab = "", ylab = "Frequency",
+          main = paste("Trip Time in minutes")) 
+
+```
+
+
+```{r some graphs}
+# Some graphs for different potential variables and their relationship with tip amount
+ggplot(dfs,aes(x = trip_distance, y =trip_time)) + geom_point() + geom_smooth() # looks linear
+
+ggplot(dfs, aes(x = trip_distance, y = trip_time)) +
+  geom_point(alpha = 0.1, size = 2) +  # Adjust transparency and point size
+  geom_smooth(method = "lm", color = "blue", se = TRUE) +  # Add linear smoother with error bars
+  scale_color_manual(values = c("blue" = "darkblue")) +  # Darken the smoother line
+  labs(x = "Trip Distance", y = "Trip Time") +
+  ggtitle("Trip: Time vs Distance") +
+  theme_minimal()
+
+ggplot(dfs, aes(x = trip_distance, y = tip_amount)) +
+  geom_point(alpha = 0.1, size = 2) +
+  geom_smooth(method = "lm", color = "blue", se = TRUE) +
+  scale_color_manual(values = c("blue" = "darkblue")) +
+  labs(x = "Trip Distance", y = "Tip Amount") +
+  ggtitle("Trip Distance vs. Tip Amount") +
+  scale_y_continuous(limits = c(0, 30)) +
+  theme_minimal()
+
+ggplot(dfs, aes(x = fare_amount)) +
+  geom_histogram(bins = 100, fill = "blue", color = "black") +
+  labs(x = "Fare Amount", y = "Frequency") +
+  ggtitle("Histogram of Fare Amount") +
+  theme_minimal()
+
+ggplot(dfs, aes(x = tip_amount)) +
+  geom_histogram(bins = 100, fill = "blue", color = "black") +
+  labs(x = "Tip Amount", y = "Frequency") +
+  ggtitle("Histogram of Tip Amount") +
+  theme_minimal()
+
+ggplot(dfs, aes(x = fare_amount, y = tip_amount)) +
+  geom_point(alpha = 0.1, size = 2) +
+  geom_smooth(method = "lm", color = "blue", se = TRUE) +
+  scale_color_manual(values = c("blue" = "darkblue")) +
+  labs(x = "Fare Amount", y = "Tip Amount") +
+  ggtitle("Fare Amount vs. Tip Amount") +
+  scale_y_continuous(limits = c(0, 30)) +
+  theme_minimal()
+
+ggplot(dfs, aes(x = fare_amount, y = tip_amount)) +
+  geom_point(alpha = 0.1, size = 2) +
+  facet_wrap(~ passenger_count) +
+  labs(x = "Fare Amount", y = "Tip Amount") +
+  scale_y_continuous(limits = c(0, 30)) +
+  ggtitle("Fare Amount vs. Tip Amount (Faceted by Passenger Count)") +
+  theme_minimal()
+
+ggplot(dfs, aes(x = fare_amount, y = tip_amount)) +
+  geom_point(alpha = 0.1, size = 2) +
+  facet_wrap(~ extra) +
+  labs(x = "Fare Amount", y = "Tip Amount") +
+  scale_y_continuous(limits = c(0, 30)) +
+  ggtitle("Fare Amount vs. Tip Amount (Faceted by Extra)") +
+  theme_minimal()
+
+
+
+```
+
+
+
+```{r}
+head(dfs[,.(calc = fare_amount+improvement_surcharge + extra +mta_tax+tip_amount,total_amount)])
+
+#   Total = fare_amount + # some function of distance and time
+#   improvement_surcharge +
+#   extra +
+#   mta_tax + 
+#   tip_amount #(target variable)
+
+```
+### The formula for the tip leading to the total amount paid
+
+```{r}
+
+# Model on Tip amount
+X =  sparse.model.matrix(~fare_amount + trip_distance+trip_time+RatecodeID + pickup_day + pickup_wkday + pickup_hr + passenger_count + pickup_loc_bin ,data=dfs[tpep_pickup_datetime > "2016-01-21",])
+y =  dfs[tpep_pickup_datetime > "2016-01-21",]$tip_amount
+
+
+model = glmnet(X,y, family = "gaussian",alpha = 1)
+glm1 = cv.glmnet(X,y, family = "gaussian",alpha = 1)
+plot(glm1)
+
+coef(model, s = glm1$lambda.min)
+
+```
+
+
+```{r TestData, warning=FALSE}
+# Read the .csv file into a data frame
+
+X_test =  sparse.model.matrix(~fare_amount + trip_distance+trip_time + RatecodeID + pickup_day + pickup_wkday + pickup_hr + passenger_count + pickup_loc_bin ,data=dfs[tpep_pickup_datetime < "2016-01-21",])
+y_test =  dfs[tpep_pickup_datetime < "2016-01-21",]$tip_amount
+
+predictions <- predict(glm1, newx = X_test, s = "lambda.min")  # Use the optimal lambda value
+
+# Calculate the Mean Squared Error (MSE) on Sampled data
+cat("MSE on sampled data: ", round(mean((y_test - predictions)^2),2))
+
+```
