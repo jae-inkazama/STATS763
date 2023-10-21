@@ -1,0 +1,205 @@
+---
+title: "STATS 763 Assign 4"
+author: "zsye658 Zain Raza Raza Syed"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggplot2)
+library(survminer)
+library(data.table)
+fish = read.csv("fush.csv")
+max(table(fish$Fish_no)) # checking if multiple cycles of the same fish in each stage of their life
+setDT(fish)
+
+```
+
+# Survival of the fishest
+
+### Some simple Data Exploration & Cleaning
+
+For example with colnames, types etc
+
+```{r cars}
+colnames(fish)
+str(fish)
+#changing vitality class
+colnames(fish)[6] = "dead"
+fish$dead = 1 * !fish$dead 
+colnames(fish)[5] = "Survival_Time"
+colnames(fish)[8] = "Wave_height"
+colnames(fish)[9] = "Depth"
+colnames(fish)[10] = "Processing_time"
+colnames(fish)[12] = "Haul_duration"
+colnames(fish)[14] = "Length"
+
+```
+
+## Data Exploration and visualisation
+
+```{r}
+
+
+# Some meaningless graphs 
+ggplot(fish, aes(x = Survival_Time, fill = Hopper)) + 
+  geom_density(alpha = 0.5) + 
+  labs(title = "Density Plot of Survival Time Grouped by Hopper Type",
+       x = "Survival Time",
+       y = "Density")
+
+ggplot(fish, aes(x = Survival_Time, fill = Vitality_class)) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Density Plot of Survival Time Grouped by Vitality_class",
+       x = "Survival Time",
+       y = "Density")
+
+
+ggplot(fish, aes(x = Temp_water, fill = Hopper )) + 
+  geom_density(alpha=0.5) + 
+  labs(title = "Density Plot of Water Temperature Grouped by Hopper Type")
+
+
+ggplot(fish, aes(x = Length, fill = Hopper))  + geom_density(alpha=0.5) + 
+  ggtitle("Density Plot of Length of fish Grouped by Hopper Type")
+
+ggplot(fish, aes(x = Length, fill = Hopper))  + geom_density(alpha=0.5) + facet_wrap(~dead)
+  ggtitle("Distribution is same for dead and not dead fish")
+
+# Boxplot for Length against Survival
+ggplot(fish, aes(x = Hopper, y = Survival_Time)) +
+  geom_boxplot() +
+  xlab("Survival Status") +
+  ylab("Survival Time") +
+  ggtitle("Relationship between Length and Survival")
+
+# Boxplot for Temp_water against Survival
+ggplot(fish, aes(x = as.factor(`dead`), y = Temp_water)) +
+  geom_boxplot() +
+  xlab("Survival Status") +
+  ylab("Water Temperature") +
+  ggtitle("Relationship between Water Temperature and Survival")
+
+# ... similarly for other variables
+ggplot(fish, aes(x = as.factor(`dead`), y = Depth)) +
+  geom_boxplot() +
+  xlab("Survival Status") +
+  ylab("Depth") +
+  ggtitle("Relationship between Water Depth and Survival")
+
+
+```
+
+
+## 1. Which variables are potential confounders for the effect of hopper type on survival?
+
+Confounders are variables that are related to both the treatment (hopper type in this case) and the outcome (survival), but are not in the causal pathway from the treatment to the outcome. Potential confounders could be:
+
+Temp_water: The water temperature might affect both the choice of hopper type and the survival of the fish.
+Wave_height: The height of waves at sea could influence both the hopper type used and fish survival.
+Depth: The depth at which fish are caught could relate to both hopper type and survival.
+Substrate: The type of sea bottom where fish are caught might affect both hopper type and fish survival.
+Haul_duration: The duration of the trawling operation could affect both the hopper type and survival.
+
+
+## 2. Which variables are potential mediators of the effect of hopper type on survival?
+
+Mediators are variables that are affected by the treatment and, in turn, affect the outcome. Potential mediators could be:
+
+Vitality_class: The health of the fish after being caught might be affected by the hopper type and could subsequently influence their survival.
+Processing time: The time from when the fish come on board to when they end up in storage tanks might depend on the hopper type and could affect survival.
+
+## 3. Estimate the effect of hopper type on survival.
+
+
+```{r}
+
+mo1 = coxph(Surv(Survival_Time, dead) ~ Hopper, fish)
+summary(mo1)
+
+```
+
+```{r , fig.height=7}
+# Fit the Kaplan-Meier survival curves for Hopper Type
+km_fit_hopper <- survfit(Surv(Survival_Time, dead) ~ Hopper, data = fish)
+
+# Plot the survival curves for Hopper Type
+ggsurvplot(km_fit_hopper, data = fish, risk.table = TRUE, ggtheme = theme_minimal())
+
+```
+
+
+```{r}
+big_mo = coxph(Surv(Survival_Time, dead) ~ Hopper + Length + Temp_water + Wave_height + Depth + Substrate + Haul_duration + Vitality_class + Processing_time, fish)
+summary(big_mo)
+
+```
+
+The negative coefficient suggests that the water-filled hopper is associated with a decrease in the hazard, indicating better survival compared to the reference category (likely a dry hopper)
+
+However, in the extended model with additional covariates (such as Length, Temp_water, Wave_height, etc.), the coefficient for Hopper changed to -0.1022 and was not statistically significant (p=0.1169). This implies that once we control for these additional factors, the type of hopper may not independently impact fish survival.
+
+
+
+## 4. How does the effect of hopper type on survival vary with fish characteristics and sea conditions?
+
+To answer this, interaction terms between hopper type and other variables (e.g., Temp_water, Wave_height, Depth, Length) could be added to the model.
+
+```{r}
+# Fit the Cox model with interaction between Hopper and Length
+mo1_length <- coxph(Surv(Survival_Time, dead) ~ Hopper * Length, data = fish)
+summary(mo1_length)
+
+```
+```{r}
+# Fit the Cox model with interaction between Hopper and Temp_water
+mo1_temp <- coxph(Surv(Survival_Time, dead) ~ Hopper * Temp_water, data = fish)
+summary(mo1_temp)
+
+```
+
+```{r}
+# Fit the Cox model with interaction between Hopper and Haul_duration
+mo1_haul <- coxph(Surv(Survival_Time, dead) ~ Hopper * Haul_duration, data = fish)
+summary(mo1_haul)
+
+```
+
+```{r}
+
+# Fit the Cox model with all interaction terms
+mo1_all <- coxph(Surv(Survival_Time, dead) ~ Hopper * (Length + Temp_water + Haul_duration), data = fish)
+summary(mo1_all)
+
+```
+Based on these models, it appears that the effect of hopper type on fish survival does not significantly vary with fish length, water temperature, or haul duration. This means that the impact of the hopper type is consistent across these different conditions and characteristics.
+
+
+
+## 5. Is vitality class a good summary of the survival risk of the fish?
+
+
+```{r}
+
+mo_hopper_vitality = coxph(Surv(Survival_Time, dead) ~ Hopper + Vitality_class, fish)
+summary(mo_hopper_vitality)
+
+```
+Fish with a "Vitality_class" of B are about 2.85 times more at risk than those with class A.
+Fish with a "Vitality_class" of C are about 8.47 times more at risk than those with class A.
+Fish with a "Vitality_class" of D are about 22.53 times more at risk than those with class A.
+
+The effect size is substantial, especially moving from class B to D, indicating a clear gradient in survival risk.
+
+```{r,  fig.height=10}
+km_fit <- survfit(Surv(Survival_Time, dead) ~ Vitality_class, data = fish)
+
+ggsurvplot(km_fit, data = fish, risk.table = TRUE)
+
+```
+
