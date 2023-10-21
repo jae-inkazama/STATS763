@@ -1,6 +1,6 @@
 # STATS763
 Coursework and Assignment from the Postgraduate Course STATS 673 titles Advanced Regression Methodolgies
-## My work during 2023 Semester  for this course
+#### This repository contain my work for this course in the 2023 Semester at the University of Auckland
 
 Course Outline: https://courseoutline.auckland.ac.nz/dco/course/STATS/763/1213
 Copied from above 
